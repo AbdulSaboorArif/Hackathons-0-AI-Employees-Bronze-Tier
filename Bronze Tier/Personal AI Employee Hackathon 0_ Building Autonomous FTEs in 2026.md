@@ -141,7 +141,7 @@ Estimated time: 20-30 hours
 
 4. Claude reasoning loop that creates Plan.md files
 
-5. One working MCP server for external action (e.g., sending emails)
+5. One working MCP server for external action (e.g., sending emails, post on linkedin, reply whatsapp messages)
 
 6. Human-in-the-loop approval workflow for sensitive actions
 
