@@ -40,7 +40,7 @@ class ApprovalExecutor:
 
     def execute_email(self, metadata, body, filepath):
         """Execute email sending"""
-        print(f"📧 Executing email: {metadata.get('subject', 'No subject')}")
+        print(f"[EMAIL] Executing email: {metadata.get('subject', 'No subject')}")
 
         # Extract email details
         email_data = {
@@ -66,48 +66,79 @@ class ApprovalExecutor:
 
         if result.returncode == 0:
             response = json.loads(result.stdout)
-            print(f"✅ Email sent successfully! Message ID: {response['message_id']}")
+            print(f"[OK] Email sent successfully! Message ID: {response['message_id']}")
             return {'status': 'success', 'message_id': response['message_id']}
         else:
             error = json.loads(result.stdout)
-            print(f"❌ Email failed: {error['error']}")
+            print(f"[ERROR] Email failed: {error['error']}")
             return {'status': 'error', 'error': error['error']}
 
     def execute_linkedin_post(self, metadata, body, filepath):
         """Execute LinkedIn posting"""
-        print(f"💼 Executing LinkedIn post")
+        print(f"[LINKEDIN] Executing LinkedIn post")
 
-        # Extract post content
+        # Extract post content (don't print it due to emoji encoding issues)
         post_content = self.extract_post_content(body)
 
-        print(f"⚠️  LinkedIn posting requires Playwright automation")
-        print(f"Post content: {post_content[:100]}...")
+        content_length = len(post_content) if post_content else 0
+        print(f"[INFO] Post content length: {content_length} characters")
 
-        # TODO: Implement Playwright automation for LinkedIn posting
-        # For now, return success with manual instruction
+        # Call the LinkedIn poster script
+        script_path = Path('.claude/skills/linkedin-poster/scripts/post_to_linkedin.py')
+        if not script_path.exists():
+            return {
+                'status': 'error',
+                'error': f'LinkedIn poster script not found: {script_path}'
+            }
 
-        return {
-            'status': 'manual_required',
-            'message': 'LinkedIn posting requires manual execution via Playwright',
-            'content': post_content
-        }
+        # Get vault and session paths
+        vault_path = self.vault_path
+        session_path = Path('watchers/linkedin/.browser-session')
+
+        print(f"[*] Calling LinkedIn poster script...")
+
+        result = subprocess.run(
+            [
+                'python', str(script_path),
+                '--vault', str(vault_path),
+                '--session', str(session_path),
+                '--approval-file', str(filepath)
+            ],
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+            errors='replace'
+        )
+
+        if result.returncode == 0:
+            print(f"[OK] LinkedIn post published successfully!")
+            return {'status': 'success', 'message': 'Posted to LinkedIn'}
+        else:
+            error_msg = result.stderr or result.stdout
+            print(f"[ERROR] LinkedIn posting failed")
+            print(f"[DEBUG] {error_msg[:200]}")
+            return {'status': 'error', 'error': error_msg[:500]}
 
     def execute_whatsapp(self, metadata, body, filepath):
         """Execute WhatsApp message sending"""
-        print(f"💬 Executing WhatsApp message to {metadata.get('to', 'Unknown')}")
+        print(f"[WHATSAPP] Executing WhatsApp message to {metadata.get('to', 'Unknown')}")
 
         # Extract message content
         message_content = self.extract_message_content(body)
 
-        print(f"⚠️  WhatsApp messaging requires Playwright automation")
         print(f"Message: {message_content[:100]}...")
 
-        # TODO: Implement Playwright automation for WhatsApp
-        # For now, return success with manual instruction
+        # For now, WhatsApp requires manual execution
+        # TODO: Implement full Playwright automation for WhatsApp
+        print(f"[WARNING] WhatsApp messaging requires manual execution")
+        print(f"[INFO] Please send this message manually via WhatsApp Web:")
+        print(f"To: {metadata.get('to', 'Unknown')}")
+        print(f"Message: {message_content}")
 
         return {
             'status': 'manual_required',
-            'message': 'WhatsApp messaging requires manual execution via Playwright',
+            'message': 'WhatsApp messaging requires manual execution',
+            'to': metadata.get('to', 'Unknown'),
             'content': message_content
         }
 
@@ -165,7 +196,7 @@ class ApprovalExecutor:
         """Move approval file to executed folder"""
         dest = self.executed_dir / filepath.name
         shutil.move(str(filepath), str(dest))
-        print(f"📁 Moved to: {dest}")
+        print(f"[*] Moved to: {dest}")
 
     def process_approval(self, filepath):
         """Process a single approval file"""
@@ -191,7 +222,7 @@ class ApprovalExecutor:
                     'status': 'error',
                     'error': f'Unknown action type: {action_type}'
                 }
-                print(f"❌ Unknown action type: {action_type}")
+                print(f"[ERROR] Unknown action type: {action_type}")
 
             # Log execution
             self.log_execution(filepath, metadata, result)
@@ -202,22 +233,22 @@ class ApprovalExecutor:
             return result
 
         except Exception as e:
-            print(f"❌ Error processing {filepath.name}: {e}")
+            print(f"[ERROR] Error processing {filepath.name}: {e}")
             return {'status': 'error', 'error': str(e)}
 
     def process_all_approvals(self):
         """Process all files in Approved folder"""
         if not self.approved_dir.exists():
-            print(f"⚠️  Approved folder not found: {self.approved_dir}")
+            print(f"[WARNING] Approved folder not found: {self.approved_dir}")
             return
 
         approval_files = list(self.approved_dir.glob('*.md'))
 
         if not approval_files:
-            print("✅ No pending approvals to process")
+            print("[OK] No pending approvals to process")
             return
 
-        print(f"\n📋 Found {len(approval_files)} approval(s) to process\n")
+        print(f"\n[INFO] Found {len(approval_files)} approval(s) to process\n")
 
         results = []
         for filepath in approval_files:

@@ -32,75 +32,104 @@ class LinkedInWatcher(BaseWatcher):
     def check_for_updates(self) -> list:
         """Check LinkedIn for new notifications and messages"""
         items = []
+        browser = None
 
         try:
             with sync_playwright() as p:
-                # Launch browser with persistent context
-                browser = p.chromium.launch_persistent_context(
-                    str(self.session_path),
-                    headless=False,  # Set to True for background operation
-                    args=['--no-sandbox']
-                )
+                try:
+                    # Launch browser with persistent context
+                    browser = p.chromium.launch_persistent_context(
+                        str(self.session_path),
+                        headless=False,  # Set to True for background operation
+                        args=['--no-sandbox']
+                    )
 
-                page = browser.pages[0] if browser.pages else browser.new_page()
+                    page = browser.pages[0] if browser.pages else browser.new_page()
 
-                # Navigate to LinkedIn
-                page.goto('https://www.linkedin.com', wait_until='domcontentloaded')
+                    # Navigate to LinkedIn
+                    page.goto('https://www.linkedin.com', wait_until='domcontentloaded')
+
+                except KeyboardInterrupt:
+                    self.logger.info('Interrupted by user during browser launch')
+                    if browser:
+                        browser.close()
+                    raise
 
                 try:
                     # Wait for feed to load (indicates logged in)
-                    page.wait_for_selector('[data-test-id="feed-container"]', timeout=10000)
+                    # Try multiple selectors to detect logged-in state
+                    login_selectors = [
+                        'nav[aria-label="Primary Navigation"]',
+                        '.global-nav',
+                        '[id="global-nav"]'
+                    ]
+
+                    logged_in = False
+                    for selector in login_selectors:
+                        try:
+                            page.wait_for_selector(selector, timeout=2000, state='visible')
+                            logged_in = True
+                            break
+                        except PlaywrightTimeout:
+                            continue
+
+                    if not logged_in:
+                        raise PlaywrightTimeout("No login indicators found")
+
                     self.logger.info('LinkedIn loaded successfully')
 
-                    # Check notifications
-                    notifications_button = page.query_selector('[id="global-nav-icon-notifications-badge"]')
-                    if notifications_button:
-                        # Check if there are unread notifications
-                        badge = page.query_selector('.notification-badge')
-                        if badge:
-                            notifications_button.click()
-                            page.wait_for_timeout(2000)
+                    # Navigate directly to notifications page (more reliable than dropdown)
+                    page.goto('https://www.linkedin.com/notifications/', wait_until='domcontentloaded')
+                    page.wait_for_timeout(3000)
 
-                            # Get notification items
-                            notification_items = page.query_selector_all('.notification-card')
+                    # Get notification items
+                    notification_items = page.query_selector_all('.artdeco-list__item')
 
-                            for notif in notification_items[:5]:  # Check first 5
-                                try:
-                                    text = notif.inner_text()
+                    self.logger.info(f'Found {len(notification_items)} notification items')
 
-                                    # Create unique ID
-                                    notif_id = text[:50]
+                    for notif in notification_items[:5]:  # Check first 5
+                        try:
+                            text = notif.inner_text().strip()
 
-                                    if notif_id not in self.processed_notifications:
-                                        # Determine notification type
-                                        notif_type = 'engagement'
-                                        if 'commented' in text.lower():
-                                            notif_type = 'comment'
-                                        elif 'liked' in text.lower() or 'reacted' in text.lower():
-                                            notif_type = 'reaction'
-                                        elif 'shared' in text.lower():
-                                            notif_type = 'share'
-                                        elif 'message' in text.lower():
-                                            notif_type = 'message'
-                                        elif 'connection' in text.lower():
-                                            notif_type = 'connection_request'
+                            if not text or len(text) < 15:
+                                continue
 
-                                        items.append({
-                                            'type': notif_type,
-                                            'text': text,
-                                            'id': notif_id,
-                                            'timestamp': datetime.now().isoformat()
-                                        })
+                            # Create unique ID
+                            notif_id = text[:50]
 
-                                        self.processed_notifications.add(notif_id)
+                            if notif_id not in self.processed_notifications:
+                                # Determine notification type
+                                notif_type = 'engagement'
+                                if 'commented' in text.lower():
+                                    notif_type = 'comment'
+                                elif 'liked' in text.lower() or 'reacted' in text.lower():
+                                    notif_type = 'reaction'
+                                elif 'shared' in text.lower():
+                                    notif_type = 'share'
+                                elif 'message' in text.lower():
+                                    notif_type = 'message'
+                                elif 'connection' in text.lower() or 'invite' in text.lower():
+                                    notif_type = 'connection_request'
 
-                                except Exception as e:
-                                    self.logger.debug(f'Error processing notification: {e}')
-                                    continue
+                                items.append({
+                                    'type': notif_type,
+                                    'text': text,
+                                    'id': notif_id,
+                                    'timestamp': datetime.now().isoformat()
+                                })
 
-                    # Check for post engagement opportunities
-                    # Look for posts with high engagement that we haven't commented on
-                    feed_posts = page.query_selector_all('[data-test-id="feed-post"]')
+                                self.processed_notifications.add(notif_id)
+                                self.logger.info(f'Detected {notif_type}: {text[:50]}...')
+
+                        except Exception as e:
+                            self.logger.debug(f'Error processing notification: {e}')
+                            continue
+
+                    # Check for post engagement opportunities on feed
+                    page.goto('https://www.linkedin.com/feed/', wait_until='domcontentloaded')
+                    page.wait_for_timeout(2000)
+
+                    feed_posts = page.query_selector_all('.feed-shared-update-v2')
 
                     for post in feed_posts[:3]:  # Check first 3 posts
                         try:
@@ -136,83 +165,75 @@ class LinkedInWatcher(BaseWatcher):
 
                     # Wait up to 5 minutes for login
                     try:
-                        page.wait_for_selector('[data-test-id="feed-container"]', timeout=300000)
+                        login_complete = False
+                        for selector in login_selectors:
+                            try:
+                                page.wait_for_selector(selector, timeout=300000, state='visible')
+                                login_complete = True
+                                break
+                            except PlaywrightTimeout:
+                                continue
+
+                        if not login_complete:
+                            raise PlaywrightTimeout("Login not detected")
+
                         print('[OK] Login successful! Checking for notifications...\n')
 
-                        # Now check for notifications since we're logged in
-                        notifications_button = page.query_selector('[id="global-nav-icon-notifications-badge"]')
-                        if notifications_button:
-                            badge = page.query_selector('.notification-badge')
-                            if badge:
-                                notifications_button.click()
-                                page.wait_for_timeout(2000)
+                        # Now check notifications after login
+                        page.goto('https://www.linkedin.com/notifications/', wait_until='domcontentloaded')
+                        page.wait_for_timeout(3000)
 
-                                notification_items = page.query_selector_all('.notification-card')
+                        notification_items = page.query_selector_all('.artdeco-list__item')
 
-                                for notif in notification_items[:5]:
-                                    try:
-                                        text = notif.inner_text()
-                                        notif_id = text[:50]
-
-                                        if notif_id not in self.processed_notifications:
-                                            notif_type = 'engagement'
-                                            if 'commented' in text.lower():
-                                                notif_type = 'comment'
-                                            elif 'liked' in text.lower() or 'reacted' in text.lower():
-                                                notif_type = 'reaction'
-                                            elif 'shared' in text.lower():
-                                                notif_type = 'share'
-                                            elif 'message' in text.lower():
-                                                notif_type = 'message'
-                                            elif 'connection' in text.lower():
-                                                notif_type = 'connection_request'
-
-                                            items.append({
-                                                'type': notif_type,
-                                                'text': text,
-                                                'id': notif_id,
-                                                'timestamp': datetime.now().isoformat()
-                                            })
-
-                                            self.processed_notifications.add(notif_id)
-
-                                    except Exception as e:
-                                        self.logger.debug(f'Error processing notification: {e}')
-                                        continue
-
-                        # Check feed posts
-                        feed_posts = page.query_selector_all('[data-test-id="feed-post"]')
-
-                        for post in feed_posts[:3]:
+                        for notif in notification_items[:5]:
                             try:
-                                reactions = post.query_selector('.social-details-social-counts__reactions-count')
-                                if reactions:
-                                    reaction_text = reactions.inner_text()
-                                    if any(char.isdigit() for char in reaction_text):
-                                        post_text = post.query_selector('.feed-shared-text')
-                                        if post_text:
-                                            text = post_text.inner_text()[:200]
-                                            post_id = f"post_{text[:30]}"
+                                text = notif.inner_text().strip()
 
-                                            if post_id not in self.processed_notifications:
-                                                items.append({
-                                                    'type': 'engagement_opportunity',
-                                                    'text': text,
-                                                    'reactions': reaction_text,
-                                                    'id': post_id,
-                                                    'timestamp': datetime.now().isoformat()
-                                                })
-                                                self.processed_notifications.add(post_id)
+                                if not text or len(text) < 15:
+                                    continue
+
+                                notif_id = text[:50]
+
+                                if notif_id not in self.processed_notifications:
+                                    notif_type = 'engagement'
+                                    if 'commented' in text.lower():
+                                        notif_type = 'comment'
+                                    elif 'liked' in text.lower() or 'reacted' in text.lower():
+                                        notif_type = 'reaction'
+                                    elif 'shared' in text.lower():
+                                        notif_type = 'share'
+                                    elif 'message' in text.lower():
+                                        notif_type = 'message'
+                                    elif 'connection' in text.lower() or 'invite' in text.lower():
+                                        notif_type = 'connection_request'
+
+                                    items.append({
+                                        'type': notif_type,
+                                        'text': text,
+                                        'id': notif_id,
+                                        'timestamp': datetime.now().isoformat()
+                                    })
+
+                                    self.processed_notifications.add(notif_id)
+
                             except Exception as e:
-                                self.logger.debug(f'Error processing post: {e}')
+                                self.logger.debug(f'Error processing notification: {e}')
                                 continue
 
                     except PlaywrightTimeout:
                         print('[TIMEOUT] Login not completed within 5 minutes')
                         print('[INFO] Will retry on next check\n')
 
-                browser.close()
+                except KeyboardInterrupt:
+                    self.logger.info('Interrupted by user during LinkedIn check')
+                    raise
+                finally:
+                    if browser:
+                        browser.close()
 
+        except KeyboardInterrupt:
+            self.logger.info('LinkedIn check interrupted by user')
+            raise
         except Exception as e:
             self.logger.error(f'Error checking LinkedIn: {e}')
 
@@ -315,4 +336,9 @@ if __name__ == '__main__':
     print(f'[INTERVAL] Checking every {args.interval} seconds')
     print(f'Press Ctrl+C to stop\n')
 
-    watcher.run()
+    try:
+        watcher.run()
+    except KeyboardInterrupt:
+        print('\n[STOP] LinkedIn Watcher stopped by user')
+        print('[INFO] Shutting down gracefully...')
+        sys.exit(0)
