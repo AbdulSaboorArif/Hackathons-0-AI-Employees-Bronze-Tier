@@ -1,0 +1,18 @@
+{
+  "vault_path": "C:\\Users\\dell\\Desktop\\Hackathons-0-AI-Employees\\Bronze Tier\\AI_Employee_Vault",
+  "gmail": {
+    "enabled": true,
+    "credentials_path": "C:\\Users\\dell\\Desktop\\Hackathons-0-AI-Employees\\Bronze Tier\\.claude\\skills\\credential.json",
+    "interval": 120
+  },
+  "whatsapp": {
+    "enabled": true,
+    "session_path": "C:\\Users\\dell\\Desktop\\Hackathons-0-AI-Employees\\Bronze Tier\\watchers\\whatsapp\\.browser-session",
+    "interval": 60
+  },
+  "linkedin": {
+    "enabled": true,
+    "session_path": "C:\\Users\\dell\\Desktop\\Hackathons-0-AI-Employees\\Bronze Tier\\watchers\\linkedin\\.browser-session",
+    "interval": 300
+  }
+}

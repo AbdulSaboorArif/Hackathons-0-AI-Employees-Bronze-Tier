@@ -1,0 +1,34 @@
+{
+  "name": "communications-mcp-server",
+  "version": "1.0.0",
+  "description": "Unified MCP server for Email, LinkedIn, and WhatsApp operations",
+  "type": "module",
+  "main": "communications-mcp-server.js",
+  "bin": {
+    "communications-mcp-server": "./communications-mcp-server.js"
+  },
+  "scripts": {
+    "start": "node communications-mcp-server.js",
+    "test": "echo 'Testing MCP server...' && node communications-mcp-server.js"
+  },
+  "keywords": [
+    "mcp",
+    "email",
+    "linkedin",
+    "whatsapp",
+    "gmail",
+    "communications",
+    "claude",
+    "ai-employee"
+  ],
+  "author": "AI Employee Hackathon",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^0.5.0",
+    "googleapis": "^140.0.0",
+    "playwright": "^1.40.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

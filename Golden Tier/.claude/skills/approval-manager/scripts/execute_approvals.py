@@ -1,0 +1,278 @@
+#!/usr/bin/env python3
+"""
+Approval Executor Script
+Executes approved actions from the /Approved folder
+"""
+
+import yaml
+import json
+import subprocess
+from pathlib import Path
+from datetime import datetime
+import shutil
+
+class ApprovalExecutor:
+    def __init__(self, vault_path):
+        self.vault_path = Path(vault_path)
+        self.approved_dir = self.vault_path / 'Approved'
+        self.executed_dir = self.vault_path / 'Executed'
+        self.logs_dir = self.vault_path / 'Logs'
+
+        # Create directories if they don't exist
+        self.executed_dir.mkdir(exist_ok=True)
+        self.logs_dir.mkdir(exist_ok=True)
+
+    def parse_approval_file(self, filepath):
+        """Parse approval file and extract metadata and content"""
+        with open(filepath, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        # Split by --- markers
+        parts = content.split('---')
+        if len(parts) < 3:
+            raise ValueError("Invalid approval file format")
+
+        # Parse YAML metadata
+        metadata = yaml.safe_load(parts[1])
+        body = parts[2].strip()
+
+        return metadata, body
+
+    def execute_email(self, metadata, body, filepath):
+        """Execute email sending"""
+        print(f"[EMAIL] Executing email: {metadata.get('subject', 'No subject')}")
+
+        # Extract email details
+        email_data = {
+            'to': metadata.get('to'),
+            'subject': metadata.get('subject'),
+            'body': self.extract_email_body(body),
+            'attachments': metadata.get('attachments', []),
+            'cc': metadata.get('cc'),
+            'bcc': metadata.get('bcc')
+        }
+
+        # Call send_email.py script
+        script_path = Path('.claude/skills/email-sender/scripts/send_email.py')
+        if not script_path.exists():
+            raise FileNotFoundError(f"Email sender script not found: {script_path}")
+
+        result = subprocess.run(
+            ['python3', str(script_path)],
+            input=json.dumps(email_data),
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode == 0:
+            response = json.loads(result.stdout)
+            print(f"[OK] Email sent successfully! Message ID: {response['message_id']}")
+            return {'status': 'success', 'message_id': response['message_id']}
+        else:
+            error = json.loads(result.stdout)
+            print(f"[ERROR] Email failed: {error['error']}")
+            return {'status': 'error', 'error': error['error']}
+
+    def execute_linkedin_post(self, metadata, body, filepath):
+        """Execute LinkedIn posting"""
+        print(f"[LINKEDIN] Executing LinkedIn post")
+
+        # Extract post content (don't print it due to emoji encoding issues)
+        post_content = self.extract_post_content(body)
+
+        content_length = len(post_content) if post_content else 0
+        print(f"[INFO] Post content length: {content_length} characters")
+
+        # Call the LinkedIn poster script
+        script_path = Path('.claude/skills/linkedin-poster/scripts/post_to_linkedin.py')
+        if not script_path.exists():
+            return {
+                'status': 'error',
+                'error': f'LinkedIn poster script not found: {script_path}'
+            }
+
+        # Get vault and session paths
+        vault_path = self.vault_path
+        session_path = Path('watchers/linkedin/.browser-session')
+
+        print(f"[*] Calling LinkedIn poster script...")
+
+        result = subprocess.run(
+            [
+                'python', str(script_path),
+                '--vault', str(vault_path),
+                '--session', str(session_path),
+                '--approval-file', str(filepath)
+            ],
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+            errors='replace'
+        )
+
+        if result.returncode == 0:
+            print(f"[OK] LinkedIn post published successfully!")
+            return {'status': 'success', 'message': 'Posted to LinkedIn'}
+        else:
+            error_msg = result.stderr or result.stdout
+            print(f"[ERROR] LinkedIn posting failed")
+            print(f"[DEBUG] {error_msg[:200]}")
+            return {'status': 'error', 'error': error_msg[:500]}
+
+    def execute_whatsapp(self, metadata, body, filepath):
+        """Execute WhatsApp message sending"""
+        print(f"[WHATSAPP] Executing WhatsApp message to {metadata.get('to', 'Unknown')}")
+
+        # Extract message content
+        message_content = self.extract_message_content(body)
+
+        print(f"Message: {message_content[:100]}...")
+
+        # For now, WhatsApp requires manual execution
+        # TODO: Implement full Playwright automation for WhatsApp
+        print(f"[WARNING] WhatsApp messaging requires manual execution")
+        print(f"[INFO] Please send this message manually via WhatsApp Web:")
+        print(f"To: {metadata.get('to', 'Unknown')}")
+        print(f"Message: {message_content}")
+
+        return {
+            'status': 'manual_required',
+            'message': 'WhatsApp messaging requires manual execution',
+            'to': metadata.get('to', 'Unknown'),
+            'content': message_content
+        }
+
+    def extract_email_body(self, body):
+        """Extract email body from approval file content"""
+        # Look for "## Email Content" section
+        if '## Email Content' in body:
+            parts = body.split('## Email Content')
+            if len(parts) > 1:
+                content = parts[1].split('##')[0].strip()
+                return content
+        return body
+
+    def extract_post_content(self, body):
+        """Extract post content from approval file"""
+        if '## Post Content' in body:
+            parts = body.split('## Post Content')
+            if len(parts) > 1:
+                content = parts[1].split('##')[0].strip()
+                return content
+        return body
+
+    def extract_message_content(self, body):
+        """Extract message content from approval file"""
+        if '## Message Content' in body:
+            parts = body.split('## Message Content')
+            if len(parts) > 1:
+                content = parts[1].split('##')[0].strip()
+                return content
+        return body
+
+    def log_execution(self, filepath, metadata, result):
+        """Log execution result"""
+        log_file = self.logs_dir / f"Approval_Execution_{datetime.now().strftime('%Y-%m-%d')}.json"
+
+        log_entry = {
+            'timestamp': datetime.now().isoformat(),
+            'file': filepath.name,
+            'action': metadata.get('action'),
+            'result': result
+        }
+
+        # Append to log file
+        logs = []
+        if log_file.exists():
+            with open(log_file, 'r') as f:
+                logs = json.load(f)
+
+        logs.append(log_entry)
+
+        with open(log_file, 'w') as f:
+            json.dump(logs, f, indent=2)
+
+    def move_to_executed(self, filepath):
+        """Move approval file to executed folder"""
+        dest = self.executed_dir / filepath.name
+        shutil.move(str(filepath), str(dest))
+        print(f"[*] Moved to: {dest}")
+
+    def process_approval(self, filepath):
+        """Process a single approval file"""
+        print(f"\n{'='*60}")
+        print(f"Processing: {filepath.name}")
+        print(f"{'='*60}")
+
+        try:
+            # Parse file
+            metadata, body = self.parse_approval_file(filepath)
+
+            action_type = metadata.get('action')
+
+            # Execute based on action type
+            if action_type == 'email_send':
+                result = self.execute_email(metadata, body, filepath)
+            elif action_type == 'linkedin_post':
+                result = self.execute_linkedin_post(metadata, body, filepath)
+            elif action_type == 'whatsapp_send':
+                result = self.execute_whatsapp(metadata, body, filepath)
+            else:
+                result = {
+                    'status': 'error',
+                    'error': f'Unknown action type: {action_type}'
+                }
+                print(f"[ERROR] Unknown action type: {action_type}")
+
+            # Log execution
+            self.log_execution(filepath, metadata, result)
+
+            # Move to executed
+            self.move_to_executed(filepath)
+
+            return result
+
+        except Exception as e:
+            print(f"[ERROR] Error processing {filepath.name}: {e}")
+            return {'status': 'error', 'error': str(e)}
+
+    def process_all_approvals(self):
+        """Process all files in Approved folder"""
+        if not self.approved_dir.exists():
+            print(f"[WARNING] Approved folder not found: {self.approved_dir}")
+            return
+
+        approval_files = list(self.approved_dir.glob('*.md'))
+
+        if not approval_files:
+            print("[OK] No pending approvals to process")
+            return
+
+        print(f"\n[INFO] Found {len(approval_files)} approval(s) to process\n")
+
+        results = []
+        for filepath in approval_files:
+            result = self.process_approval(filepath)
+            results.append(result)
+
+        # Summary
+        print(f"\n{'='*60}")
+        print("Summary")
+        print(f"{'='*60}")
+        print(f"Total processed: {len(results)}")
+        print(f"Successful: {sum(1 for r in results if r['status'] == 'success')}")
+        print(f"Failed: {sum(1 for r in results if r['status'] == 'error')}")
+        print(f"Manual required: {sum(1 for r in results if r['status'] == 'manual_required')}")
+
+if __name__ == '__main__':
+    import sys
+
+    # Get vault path from argument or use current directory
+    vault_path = sys.argv[1] if len(sys.argv) > 1 else '.'
+
+    print("=" * 60)
+    print("Approval Executor")
+    print("=" * 60)
+
+    executor = ApprovalExecutor(vault_path)
+    executor.process_all_approvals()

@@ -1,0 +1,12 @@
+node_modules
+__pycache__
+*.pyc
+.env
+.git
+.gitignore
+*.md
+watchers/.browser-session
+.claude/skills/*/node_modules
+AI_Employee_Vault/Logs
+token.json
+credential.json

@@ -1,0 +1,23 @@
+This is a sample document for testing the AI Employee system.
+
+# Test Document
+
+## Purpose
+This file is used to test the File System Watcher and task processing workflow.
+
+## What Should Happen
+1. When this file is placed in the Inbox/ folder
+2. The File System Watcher should detect it
+3. An action file should be created in Needs_Action/
+4. Claude Code can then process the action file
+5. The task should be moved to Done/ when complete
+
+## Test Instructions
+1. Copy this file to AI_Employee_Vault/Inbox/
+2. Watch the watcher console for detection message
+3. Check AI_Employee_Vault/Needs_Action/ for the generated action file
+4. Run Claude Code to process the task
+5. Verify the task appears in Done/ folder
+
+---
+*Test file for Bronze Tier AI Employee*
